@@ -12,7 +12,7 @@ This is a plugin built for musicians and producers who want to:
 
 ## How to Install
 
-Download the [latest release]() for your operating system. It's a single file, which should be added to the `UserPlugins` folder of reaper.
+Download the [latest release](https://github.com/hugoaboud/reaper-git/releases/latest) for your operating system. It's a single file, which should be added to the `UserPlugins` folder of reaper.
 
 - Windows: `C:\Users\XYZ\AppData\Roaming\REAPER\UserPlugins`
 - Linux: `/home/XYZ/.config/REAPER/UserPlugins`
@@ -137,8 +137,9 @@ There are 3 ways you can contribute:
 
 > The build was only tested on Linux (cross-compiled for Windows).
 
-Clone the repo and run:
+Clone the repo and run the build script:
 ```sh
+git clone --recurse-submodules https://github.com/hugoaboud/reaper-git.git
 sh scripts/build.sh
 ```
 
