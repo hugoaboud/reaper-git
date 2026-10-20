@@ -146,7 +146,13 @@ third-party source.
 - **Linux:** the module links `libssl`, `libcrypto`, `libstdc++`, `libgcc`,
   `libc` and `libm`, and is installed into REAPER's `UserPlugins` folder.
 - **Windows:** the module links only system libraries; it can be built with
-  MSVC or cross-compiled with the MinGW preset in `CMakePresets.json`.
+  MSVC or cross-compiled with the MinGW preset in `CMakePresets.json`. A MinGW
+  build must link the GNU runtime statically (`-static -static-libgcc
+  -static-libstdc++`, already set for `MINGW`): otherwise the module imports
+  `libstdc++-6.dll`, `libgcc_s_seh-1.dll` and `libwinpthread-1.dll`, which are
+  not present on a normal Windows machine, and REAPER silently fails to load it.
+  Check with `x86_64-w64-mingw32-objdump -p build/windows/bin/reaper_git.dll |
+  grep "DLL Name"`: only system DLLs should be listed.
 - All application code is shared; only the SWELL stub and the link libraries
   differ per platform.
 

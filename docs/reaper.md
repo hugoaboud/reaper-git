@@ -16,6 +16,7 @@ Everything it needs from the host comes through REAPER's plug-in API.
 - [Guards around the project](#guards-around-the-project)
 - [Settings storage](#settings-storage)
 - [How the parts relate](#how-the-parts-relate)
+- [Diagnostics](#diagnostics)
 - [Caveats](#caveats)
 - [Changing the integration](#changing-the-integration)
 
@@ -38,8 +39,13 @@ project can be shared with someone who does not have the extension.
   listed and bindable in REAPER's Actions window.
 - `hookcommand` opens the panel when the action runs.
 - `hookcustommenu` adds a single **Git** entry to the top of the main File menu.
-  The entry opens the panel; pulling and pushing live inside it. The menu is only
-  touched while REAPER builds it (`flag == 0`), which is the supported moment.
+  The entry opens the panel; pulling and pushing live inside it. The hook is
+  handled for both flag values and inserts the entry only when it is missing:
+  `flag == 0` (default menu being built) is where Reaper keeps additions the user
+  can then customize, but a user whose File menu is already customized is only
+  ever called with `flag == 1` (menu about to be shown), and the stored menu does
+  not contain earlier default-menu additions. Handling one flag only makes the
+  entry disappear on those installations.
 - A `timer` callback runs on the main thread and is used to notice project
   changes.
 - `ext_name` is registered as `reaper_git` for identification.
@@ -156,6 +162,31 @@ The panel is the only place that decides *what* to do; the settings store keeps
 what the user configured, and the git service performs the operation. REAPER
 itself is only consulted for three facts: which project is open, whether it is
 saved, and which folder it lives in.
+
+## Diagnostics
+
+REAPER gives extensions no console, so the extension writes one small log file,
+`reaper_git.log`, in the folder returned by `GetResourcePath` (next to
+`reaper_git.json`); if that path is not available yet, it goes to the system's
+temporary folder. The file is truncated on every load and records:
+
+- the entry point being called and the `caller_version` REAPER passed;
+- the result of `REAPERAPI_LoadAPI` and of each registration (command id,
+  accelerator, command hook, menu hook, timer);
+- every `hookcustommenu` call for the File menu with its menu id and flag, and
+  whether the entry was added or already present;
+- every request to open the panel through the command.
+
+This makes two different failures easy to tell apart:
+
+- **No log file at all** after starting REAPER means the module was never
+  loaded. On Windows that is almost always a missing dependency of the DLL
+  (`libstdc++-6.dll` and friends from an unstripped MinGW build); on Linux a
+  wrong folder or a broken `libssl`/`libcrypto`. The action also does not appear
+  in the Actions window in that case.
+- **A log file that stops early** names the registration that failed, and a log
+  that records `menu: ... ignored (other menu)` shows the host never offered the
+  File menu under the expected identifier.
 
 ## Caveats
 

@@ -123,6 +123,12 @@ if(WIN32)
   # Windows: REAPER's own Win32 API is used directly, no SWELL needed.
   target_compile_definitions(reaper_git PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_link_libraries(reaper_git PRIVATE user32 crypt32 secur32 ws2_32 shell32 ole32)
+  if(MINGW)
+    # A MinGW build otherwise imports libstdc++-6.dll, libgcc_s_seh-1.dll and
+    # libwinpthread-1.dll, which do not exist on a normal Windows machine: REAPER
+    # then silently fails to load the file. Link the runtime into the module.
+    target_link_options(reaper_git PRIVATE -static -static-libgcc -static-libstdc++)
+  endif()
 else()
   # Linux: REAPER provides the SWELL (Win32 emulation) API to the plug-in.
   # swell-modstub-generic.cpp turns every SWELL call into a function pointer
