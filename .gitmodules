@@ -1,0 +1,6 @@
+[submodule "third_party/libgit2"]
+	path = third_party/libgit2
+	url = https://github.com/libgit2/libgit2
+[submodule "third_party/libssh2"]
+	path = third_party/libssh2
+	url = https://github.com/libssh2/libssh2
