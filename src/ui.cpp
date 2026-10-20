@@ -1,5 +1,6 @@
 #include "ui.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -7,6 +8,8 @@
 #include <set>
 
 #ifdef _WIN32
+// WIN32_LEAN_AND_MEAN keeps <windows.h> from pulling in the common dialogs.
+#  include <commdlg.h>
 #  include <shlobj.h>
 #endif
 
@@ -781,7 +784,14 @@ bool pickFile(HWND parent, const std::string &title, const std::string &initial,
 {
 #ifdef _WIN32
   const std::wstring titleW = widen(title);
+  const std::wstring initialW = widen(initial);
   wchar_t buffer[MAX_PATH] = {0};
+  if (!initialW.empty())
+  {
+    const std::size_t count =
+        initialW.size() < MAX_PATH ? initialW.size() : static_cast<std::size_t>(MAX_PATH - 1);
+    std::copy_n(initialW.c_str(), count, buffer);
+  }
 
   OPENFILENAMEW dialog{};
   dialog.lStructSize = sizeof(dialog);

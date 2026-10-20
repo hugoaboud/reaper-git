@@ -3,7 +3,6 @@
 set -e
 
 source_file=build/linux/bin/reaper_git.so
-[ -f "$source_file" ] || source_file=build/bin/reaper_git.so
 
 if [ ! -f "$source_file" ]; then
   echo "No build found. Run scripts/build.sh first." >&2

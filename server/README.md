@@ -6,7 +6,7 @@ You can use the `docker-compose.yaml` on this folder to run a dedicated git serv
 docker compose up
 ```
 
-## Creating a repo
+## Creating a reaper git repo
 
 Run the script:
 ```sh

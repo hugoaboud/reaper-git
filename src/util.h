@@ -11,6 +11,11 @@
 #include <sys/stat.h>
 #include <vector>
 
+#ifdef _WIN32
+// _mkdir lives in <direct.h>; <sys/stat.h> only declares stat/_stat there.
+#  include <direct.h>
+#endif
+
 namespace util
 {
 
