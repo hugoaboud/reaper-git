@@ -156,10 +156,12 @@ void refreshWindow(HWND hwnd)
 {
   if (!hwnd) return;
 #ifdef _WIN32
-  // Windows invalidates the given window only, not its children: without
-  // RDW_ALLCHILDREN controls keep their old pixels until the mouse hovers them.
-  // No forced repaint either, otherwise a layout pass flickers.
-  RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+  // The parent only: it is clipped to the children (WS_CLIPCHILDREN), so this
+  // repaints just the background, which is what erases what a moved or hidden
+  // control left behind. Children repaint themselves when their own text, state
+  // or size changes, so invalidating the whole tree here would repaint every
+  // control on every refresh and flicker.
+  RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE);
 #else
   // SWELL repaints from its own invalidation bookkeeping, children included.
   InvalidateRect(hwnd, nullptr, TRUE);
@@ -194,9 +196,12 @@ HWND addControl(HWND parent, const char *className, const std::string &text, int
 #ifdef _WIN32
   const std::wstring klass = widen(className);
   const std::wstring caption = widen(text);
-  return CreateWindowExW(0, klass.c_str(), caption.c_str(), style | WS_CHILD | WS_VISIBLE, x, y, w,
-                         h, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                         GetModuleHandleW(nullptr), nullptr);
+  HWND control =
+      CreateWindowExW(0, klass.c_str(), caption.c_str(), style | WS_CHILD | WS_VISIBLE, x, y, w,
+                      h, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                      GetModuleHandleW(nullptr), nullptr);
+  setFont(control, dialogFont());
+  return control;
 #else
   SWELL_MakeSetCurParms(1, 1, 0, 0, parent, false, false);
   return SWELL_MakeControl(text.c_str(), id, className, style | WS_CHILD | WS_VISIBLE, x, y, w, h,
@@ -230,14 +235,120 @@ void setText(HWND control, const std::string &text)
 
 HFONT createFont(int height, bool bold)
 {
+#ifdef _WIN32
+  // "sans-serif" is not a family Windows knows; use the face of the dialog font
+  // so bold and hint text look like the rest of the window.
+  return CreateFontW(-height, 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
+                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+                     DEFAULT_PITCH, L"Segoe UI");
+#else
   return CreateFont(-height, 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
                     DEFAULT_PITCH, "sans-serif");
+#endif
 }
 
 void setFont(HWND control, HFONT font)
 {
   if (control && font) SendMessage(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+}
+
+HFONT dialogFont()
+{
+#ifdef _WIN32
+  static HFONT font = nullptr;
+  static bool asked = false;
+  if (!asked)
+  {
+    asked = true;
+    NONCLIENTMETRICSW metrics{};
+    metrics.cbSize = sizeof(metrics);
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
+      font = CreateFontIndirectW(&metrics.lfMessageFont);
+  }
+  return font;
+#else
+  return nullptr; // SWELL applies its own default font
+#endif
+}
+
+int lineHeight(HFONT font)
+{
+#ifndef _WIN32
+  (void)font; // SWELL has no metric API to query; callers fall back to 15 px
+  return 0;
+#else
+  HDC dc = CreateCompatibleDC(nullptr);
+  if (!dc) return 0;
+  HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
+  TEXTMETRICW metrics{};
+  const int height = GetTextMetricsW(dc, &metrics) ? metrics.tmHeight + metrics.tmExternalLeading : 0;
+  if (previous) SelectObject(dc, previous);
+  DeleteDC(dc);
+  return height;
+#endif
+}
+
+int textHeight(const std::string &value, int width, HFONT font)
+{
+#ifdef _WIN32
+  if (value.empty() || width <= 0) return 0;
+  HDC dc = CreateCompatibleDC(nullptr);
+  if (!dc) return 0;
+  HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
+
+  RECT rect{0, 0, width, 0};
+  const std::wstring wide = widen(value);
+  DrawTextW(dc, wide.c_str(), -1, &rect, DT_CALCRECT | DT_WORDBREAK | DT_LEFT);
+
+  if (previous) SelectObject(dc, previous);
+  DeleteDC(dc);
+  return rect.bottom - rect.top;
+#else
+  (void)value;
+  (void)width;
+  (void)font;
+  return 0; // SWELL dialogs keep their tuned sizes
+#endif
+}
+
+void resizeWindow(HWND hwnd, int width, int height)
+{
+  if (!hwnd) return;
+  int frameWidth = width;
+  int frameHeight = height;
+#ifdef _WIN32
+  // The requested size is the content size, so add the window frame.
+  RECT rect{0, 0, width, height};
+  const LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+  const LONG exStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+  AdjustWindowRectEx(&rect, static_cast<DWORD>(style), FALSE, static_cast<DWORD>(exStyle));
+  frameWidth = rect.right - rect.left;
+  frameHeight = rect.bottom - rect.top;
+#endif
+  SetWindowPos(hwnd, nullptr, 0, 0, frameWidth, frameHeight,
+               SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void listSelectFullRows(HWND list)
+{
+#ifdef _WIN32
+  // Without this only the first column of a row can be clicked.
+  ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT);
+#else
+  (void)list; // SWELL selects whole rows already
+#endif
+}
+
+void refreshWindowDeep(HWND window)
+{
+  if (!window) return;
+#ifdef _WIN32
+  RedrawWindow(window, nullptr, nullptr,
+               RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+#else
+  InvalidateRect(window, nullptr, TRUE);
+#endif
 }
 
 HBRUSH brush(COLORREF color)
@@ -258,14 +369,23 @@ void fillRect(HDC dc, const RECT &rect, HBRUSH brushHandle)
   ::FillRect(dc, &copy, brushHandle);
 }
 
-void drawCenteredText(HDC dc, const RECT &rect, const std::string &value)
+void drawCenteredText(HDC dc, const RECT &rect, HWND control)
 {
-  if (!dc) return;
+  if (!dc || !control) return;
   RECT copy = rect;
   SetBkMode(dc, TRANSPARENT);
+
 #ifdef _WIN32
-  DrawTextW(dc, widen(value).c_str(), -1, &copy, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+  // The control's font, not the DC default: otherwise the caption of an
+  // owner-drawn button has a different size than its neighbours.
+  const HFONT font = reinterpret_cast<HFONT>(SendMessageW(control, WM_GETFONT, 0, 0));
+  HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
+  const std::wstring value = widen(text(control));
+  DrawTextW(dc, value.c_str(), -1, &copy,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+  if (previous) SelectObject(dc, previous);
 #else
+  const std::string value = text(control);
   DrawText(dc, value.c_str(), -1, &copy, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 #endif
 }
@@ -342,7 +462,7 @@ bool themeMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT *re
       fillRect(item->hDC, item->rcItem,
                brush(enabled ? kDialogButtonFace : kDialogButtonFaceOff));
       SetTextColor(item->hDC, enabled ? kDialogButtonText : kDialogButtonTextOff);
-      drawCenteredText(item->hDC, item->rcItem, text(item->hwndItem));
+      drawCenteredText(item->hDC, item->rcItem, item->hwndItem);
       if (result) *result = 1;
       return true;
     }
@@ -605,17 +725,31 @@ void buildCheckboxDialog(HWND hwnd)
 {
   CheckboxState *state = g_checkboxState;
   if (!state) return;
-  addControl(hwnd, "STATIC", state->message, 0, SS_LEFT, 14, 14, 545, 60);
+
+  // The Windows font is taller than SWELL's, so the text blocks are measured and
+  // the dialog grows instead of cropping the warning (the sizes below are the
+  // minimums the layout was designed with).
+  HWND message = addControl(hwnd, "STATIC", state->message, 0, SS_LEFT, 14, 14, 545, 60);
+  const int messageHeight = std::max(60, textHeight(state->message, 545, dialogFont()));
+  moveControl(message, 14, 14, 545, messageHeight);
+
+  const int rowY = 14 + messageHeight + 10;
   // System checkbox (box only) plus a static label: SWELL paints a checkbox's
   // caption with its own theme colours, so the yellow warning text has to live in
   // a control whose colour the dialog controls.
   state->check =
-      addControl(hwnd, "BUTTON", "", 101, BS_AUTOCHECKBOX | WS_TABSTOP, 14, 84, 22, 22);
+      addControl(hwnd, "BUTTON", "", 101, BS_AUTOCHECKBOX | WS_TABSTOP, 14, rowY, 22, 22);
   if (state->checked) SendMessage(state->check, BM_SETCHECK, BST_CHECKED, 0);
-  state->checkText = addControl(hwnd, "STATIC", state->checkLabel, 0, SS_LEFT, 40, 84, 520, 44);
+
+  state->checkText = addControl(hwnd, "STATIC", state->checkLabel, 0, SS_LEFT, 40, rowY, 520, 44);
+  const int labelHeight = std::max(44, textHeight(state->checkLabel, 520, dialogFont()));
+  moveControl(state->checkText, 40, rowY, 520, labelHeight);
   setWarningText(state->checkText, true);
-  addButton(hwnd, "Remove", IDOK, 404, 150, 76, 26);
-  addButton(hwnd, "Cancel", IDCANCEL, 486, 150, 76, 26);
+
+  const int buttonsY = rowY + labelHeight + 22;
+  addButton(hwnd, "Remove", IDOK, 404, buttonsY, 76, 26);
+  addButton(hwnd, "Cancel", IDCANCEL, 486, buttonsY, 76, 26);
+  resizeWindow(hwnd, 580, buttonsY + 26 + 24);
 }
 
 UI_DLGRET checkboxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)

@@ -133,11 +133,14 @@ API. New code belongs in the matching group.
   wrap the list view. Lists repaint themselves after a change; the rest of the
   panel needs `ui::refreshWindow`.
 - Invalidation is not the same on both platforms: SWELL repaints children when
-  the parent is invalidated, Windows does not. `ui::refreshWindow` therefore uses
-  `RedrawWindow` with `RDW_ALLCHILDREN` there, without a forced repaint. Moving or
-  hiding controls does not invalidate anything by itself, so a layout pass must
-  end with one `ui::refreshWindow` call - per-control invalidation made the panel
-  flicker. Skipping the final refresh leaves old pixels behind.
+  the parent is invalidated, Windows does not. `ui::refreshWindow` repaints the
+  window background only (it is clipped to the children), which is what erases
+  what a moved or hidden control left behind; controls repaint themselves when
+  their text, state or size changes. Two things need more than that on Windows:
+  a moved list view keeps its old pixels (the layout invalidates the lists), and
+  a batch such as a section toggle or a project load ends with
+  `ui::refreshWindowDeep`, which repaints the whole tree once. Invalidating the
+  whole tree on every refresh instead made the panel flicker.
 - History can start with a synthetic row for uncommitted changes. Any code that
   maps a selected row to a commit must subtract `Panel::historyRowOffset`.
 - Long text is truncated with ASCII dots, because SWELL's fonts may lack

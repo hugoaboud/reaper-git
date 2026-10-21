@@ -39,13 +39,30 @@ using BuildProc = void (*)(HWND);
 // Small helper fonts for the action hints (bold for the button titles).
 HFONT createFont(int height, bool bold);
 void setFont(HWND control, HFONT font);
+// Font every control is created with. On Windows it is the system dialog font,
+// so text has the same size as in any other Windows dialog; on Linux SWELL picks
+// its own and this returns nullptr.
+HFONT dialogFont();
+// Height of one line of `font` in pixels, and the height `text` needs when it is
+// wrapped at `width`. Both return 0 when the metric cannot be read.
+int lineHeight(HFONT font);
+int textHeight(const std::string &text, int width, HFONT font);
+// Resizes a dialog or window so that the content fits.
+void resizeWindow(HWND hwnd, int width, int height);
+// Makes a list view select a whole row instead of a single cell.
+void listSelectFullRows(HWND list);
+// Invalidates the window *and every control in it*. This repaints everything, so
+// it is for the end of a batch (a project load, for example), never per frame.
+void refreshWindowDeep(HWND window);
+
 
 // Solid brushes for the custom-drawn panel chrome (cached per colour).
 HBRUSH brush(COLORREF color);
 // Fills a rectangle with a brush.
 void fillRect(HDC dc, const RECT &rect, HBRUSH brush);
-// Draws single-line, centred text in the given rectangle.
-void drawCenteredText(HDC dc, const RECT &rect, const std::string &text);
+// Draws the caption of `control` centred in the given rectangle, using the
+// control's own font.
+void drawCenteredText(HDC dc, const RECT &rect, HWND control);
 
 // Dark dialog styling shared by every dialog: returns true when the message was
 // a colour request (the caller must then return `result`).

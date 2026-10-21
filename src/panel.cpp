@@ -130,7 +130,10 @@ void createHintBox(HWND parent, HintBox &hint)
 int hintBoxHeight(const HintBox &hint)
 {
   if (!hint.sectionOpen || hint.lineCount <= 0) return 0;
-  return 6 + hint.lineCount * 15;
+  // A Windows font is taller than SWELL's, so the row height follows the font
+  // instead of assuming 15 pixels.
+  const int line = std::max(15, ui::lineHeight(g_hintFont));
+  return 6 + hint.lineCount * line;
 }
 
 void setHintLines(HintBox &hint, const std::vector<std::pair<std::string, std::string>> &entries)
@@ -157,15 +160,16 @@ void layoutHintBox(HintBox &hint, int x, int y, int width)
   if (height <= 0) return;
 
   ui::moveControl(hint.box, x, y, width, height);
+  const int line = std::max(15, ui::lineHeight(g_hintFont));
   for (int i = 0; i < kHintLines; ++i)
   {
     const bool show = i < hint.lineCount;
     ui::setVisible(hint.lines[i].title, show);
     ui::setVisible(hint.lines[i].reason, show);
     if (!show) continue;
-    const int lineY = y + 2 + i * 15;
-    ui::moveControl(hint.lines[i].title, x + 6, lineY, 74, 14);
-    ui::moveControl(hint.lines[i].reason, x + 82, lineY, width - 88, 14);
+    const int lineY = y + 2 + i * line;
+    ui::moveControl(hint.lines[i].title, x + 6, lineY, 74, line - 1);
+    ui::moveControl(hint.lines[i].reason, x + 82, lineY, width - 88, line - 1);
   }
 }
 
@@ -332,7 +336,7 @@ void refreshProjectIfChanged()
   // Do not refresh (or re-enable anything) while a load is in progress.
   if (g_panel->busy) return;
   const std::string file = currentProjectFile();
-  const int dirty = IsProjectDirty ? IsProjectDirty(nullptr) : 0;
+  const int dirty = (IsProjectDirty && IsProjectDirty(nullptr) != 0) ? 1 : 0;
   if (file == g_lastProjectFile && dirty == g_lastProjectDirty) return;
   g_lastProjectFile = file;
   g_lastProjectDirty = dirty;
@@ -391,7 +395,27 @@ void reloadCurrentProject(Panel &p)
 
   const std::string argument = "noprompt:" + file;
   setBusy(p, true);
+
+#ifdef _WIN32
+  // REAPER's splash keeps covering and uncovering the panel while the project
+  // loads, and every uncover repaints the list views - that is the flicker. Stop
+  // them painting for the duration and refresh them once afterwards.
+  const HWND lists[] = {p.remoteList, p.repoList, p.incomingList, p.historyList, p.stashList};
+  for (HWND list : lists)
+    if (list) SendMessageW(list, WM_SETREDRAW, FALSE, 0);
+#endif
+
   Main_openProject(argument.c_str());
+
+#ifdef _WIN32
+  for (HWND list : lists)
+    if (list)
+    {
+      SendMessageW(list, WM_SETREDRAW, TRUE, 0);
+      InvalidateRect(list, nullptr, TRUE);
+    }
+#endif
+
   setBusy(p, false);
 
   // REAPER keeps its "project loaded" splash up until the main window owns the
@@ -401,6 +425,10 @@ void reloadCurrentProject(Panel &p)
     HWND mainWindow = GetMainHwnd();
     if (mainWindow) SetForegroundWindow(mainWindow);
   }
+
+  // One full repaint, children included: the load cleared and refilled the lists
+  // while the panel was disabled, and those controls need a fresh paint.
+  if (p.hwnd) ui::refreshWindowDeep(p.hwnd);
 }
 
 // Call sites operate on the single global panel.
@@ -1017,6 +1045,15 @@ void layout(Panel &p)
 
   ui::moveControl(p.statusLabel, x, client.bottom - 22, w - 90, 18);
   ui::moveControl(p.versionLabel, x + w - 90, client.bottom - 22, 90, 18);
+
+#ifdef _WIN32
+  // A moved list view keeps the pixels of its old position until it is
+  // invalidated, so the sections around it look dirty after a toggle.
+  const HWND lists[] = {p.remoteList, p.repoList, p.incomingList, p.historyList, p.stashList};
+  for (HWND list : lists)
+    if (list && IsWindowVisible(list)) InvalidateRect(list, nullptr, TRUE);
+#endif
+
   ui::refreshWindow(p.hwnd);
 }
 
@@ -1026,6 +1063,7 @@ void toggleSection(Panel &p, bool &flag, HWND /*header*/, const char * /*title*/
   // WM_DRAWITEM in panelProc), so it must be repainted after the toggle.
   flag = !flag;
   layout(p);
+  ui::refreshWindowDeep(p.hwnd);
 
   const HWND headers[] = {p.remotesHeader, p.reposHeader, p.projectHeader, p.historyHeader};
   for (HWND header : headers)
@@ -2293,6 +2331,7 @@ void buildPanel(HWND hwnd)
                                  LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER |
                                      WS_TABSTOP,
                                  10, 70, 100, 92);
+  ui::listSelectFullRows(p->remoteList);
   ui::listAddColumn(p->remoteList, 0, "Name", 140);
   ui::listAddColumn(p->remoteList, 1, "URL", 380);
   ui::listAddColumn(p->remoteList, 2, "User", 120);
@@ -2312,6 +2351,7 @@ void buildPanel(HWND hwnd)
                                LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER |
                                    WS_TABSTOP,
                                10, 270, 100, 92);
+  ui::listSelectFullRows(p->repoList);
   ui::listAddColumn(p->repoList, 0, "Remote", 140);
   ui::listAddColumn(p->repoList, 1, "Name", 200);
   ui::listAddColumn(p->repoList, 2, "Folder", 560);
@@ -2349,6 +2389,7 @@ void buildPanel(HWND hwnd)
   p->incomingList = ui::addControl(hwnd, "SysListView32", "", IDC_INCOMING_LIST,
                                    LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER,
                                    10, 576, 100, 80);
+  ui::listSelectFullRows(p->incomingList);
   ui::listAddColumn(p->incomingList, 0, "Hash", 80);
   ui::listAddColumn(p->incomingList, 1, "Message", 470);
   ui::listAddColumn(p->incomingList, 2, "Author", 130);
@@ -2367,6 +2408,7 @@ void buildPanel(HWND hwnd)
                                   LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER |
                                       WS_TABSTOP,
                                   10, 740, 100, 160);
+  ui::listSelectFullRows(p->historyList);
   ui::listAddColumn(p->historyList, 0, "", 40);
   ui::listAddColumn(p->historyList, 1, "Hash", 75);
   ui::listAddColumn(p->historyList, 2, "Message", 470);
@@ -2384,6 +2426,7 @@ void buildPanel(HWND hwnd)
                                 LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER |
                                     WS_TABSTOP,
                                 10, 1000, 100, 92);
+  ui::listSelectFullRows(p->stashList);
   ui::listAddColumn(p->stashList, 0, "Hash", 70);
   ui::listAddColumn(p->stashList, 1, "Message", 420);
   ui::listAddColumn(p->stashList, 2, "Author", 120);
@@ -2469,6 +2512,17 @@ UI_DLGRET panelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         {
           if (control && (control == line.title || control == line.reason))
           {
+#ifdef _WIN32
+            // The hint text sits on the hint box, so it needs that colour as
+            // background; SWELL's "no background" marker is not a valid brush
+            // here and left the label blank.
+            if (dc)
+            {
+              SetBkColor(dc, kSectionClosed);
+              SetTextColor(dc, kTextOnDark);
+            }
+            return reinterpret_cast<LRESULT>(ui::brush(kSectionClosed));
+#else
             if (dc)
             {
               SetBkMode(dc, TRANSPARENT);
@@ -2476,6 +2530,7 @@ UI_DLGRET panelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
             // (HBRUSH)1 tells SWELL "draw no background for this control".
             return 1;
+#endif
           }
         }
       }
@@ -2537,7 +2592,7 @@ UI_DLGRET panelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
           ui::fillRect(item->hDC, item->rcItem,
                        ui::brush(enabled ? kButtonFace : kButtonFaceDisabled));
           SetTextColor(item->hDC, enabled ? kButtonText : kButtonTextDisabled);
-          ui::drawCenteredText(item->hDC, item->rcItem, ui::text(item->hwndItem));
+          ui::drawCenteredText(item->hDC, item->rcItem, item->hwndItem);
           return 1;
         }
         default:
@@ -2545,13 +2600,13 @@ UI_DLGRET panelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
           // leaving it invisible.
           ui::fillRect(item->hDC, item->rcItem, ui::brush(kSectionClosed));
           SetTextColor(item->hDC, kTextOnDark);
-          ui::drawCenteredText(item->hDC, item->rcItem, ui::text(item->hwndItem));
+          ui::drawCenteredText(item->hDC, item->rcItem, item->hwndItem);
           return 1;
       }
 
       ui::fillRect(item->hDC, item->rcItem, ui::brush(expanded ? kSectionOpen : kSectionClosed));
       SetTextColor(item->hDC, expanded ? kTextOnTeal : kTextOnDark);
-      ui::drawCenteredText(item->hDC, item->rcItem, ui::text(item->hwndItem));
+      ui::drawCenteredText(item->hDC, item->rcItem, item->hwndItem);
       return 1;
     }
 
@@ -2682,6 +2737,17 @@ UI_DLGRET panelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       if (hdr && hdr->idFrom == IDC_HISTORY_LIST && hdr->code == NM_CUSTOMDRAW)
       {
         auto *custom = reinterpret_cast<NMLVCUSTOMDRAW *>(lParam);
+#ifdef _WIN32
+        // Win32 asks for the whole control first and for each row afterwards,
+        // and expects the answer in DWLP_MSGRESULT rather than as the return
+        // value of a dialog procedure.
+        if (custom->nmcd.dwDrawStage == CDDS_PREPAINT)
+        {
+          SetWindowLongPtr(hwnd, DWLP_MSGRESULT, CDRF_NOTIFYITEMDRAW);
+          return 1;
+        }
+        if (custom->nmcd.dwDrawStage != CDDS_ITEMPREPAINT) return 1;
+#endif
         const int row = static_cast<int>(custom->nmcd.dwItemSpec);
         if (row >= 0 && row < static_cast<int>(p->historyRowColors.size()))
         {
@@ -2694,6 +2760,9 @@ UI_DLGRET panelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             default: break;
           }
         }
+#ifdef _WIN32
+        SetWindowLongPtr(hwnd, DWLP_MSGRESULT, CDRF_NEWFONT);
+#endif
         return 1;
       }
 
@@ -2746,7 +2815,9 @@ void open()
   {
     layout(*g_panel);
     refresh();
-    ui::refreshWindow(hwnd);
+    // Deep repaint on open: the controls were created while the window was being
+    // shown, and a couple of them would otherwise keep an unpainted corner.
+    ui::refreshWindowDeep(hwnd);
   }
 }
 
