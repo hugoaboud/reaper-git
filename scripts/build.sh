@@ -52,7 +52,18 @@ fi
 
 if [ "$want_windows" -eq 1 ]; then
   echo "Building for Windows (version $version) ..."
-  cmake --preset windows-mingw -DREAPER_GIT_VERSION="$version"
+  # libssh2 needs OpenSSL for the key exchanges modern SSH servers offer; without
+  # it the build falls back to the Windows CNG backend and SSH fails. Use the
+  # cross-built copy under tmp/ when it exists, otherwise whatever the caller
+  # points OPENSSL_ROOT_DIR at.
+  openssl_root=""
+  if [ -n "${OPENSSL_ROOT_DIR:-}" ]; then
+    openssl_root="$OPENSSL_ROOT_DIR"
+  elif [ -d "$PWD/tmp/openssl/mingw" ]; then
+    openssl_root="$PWD/tmp/openssl/mingw"
+  fi
+  cmake --preset windows-mingw -DREAPER_GIT_VERSION="$version" \
+    ${openssl_root:+-DOPENSSL_ROOT_DIR="$openssl_root"} -DOPENSSL_USE_STATIC_LIBS=TRUE
   cmake --build --preset windows-mingw
   echo "Windows build: build/windows/bin/reaper_git.dll"
 fi

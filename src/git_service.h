@@ -2,6 +2,7 @@
 #pragma once
 
 #include <ctime>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -75,6 +76,13 @@ bool checkRemote(const std::string &url, const Credentials &creds, std::string *
 // without a repository path, so only an explicit auth rejection counts as a
 // failure there.
 bool checkAuthentication(const std::string &url, const Credentials &creds, std::string *error);
+
+// Called when an SSH server presents a host key that is neither in the user's
+// known_hosts file nor in the settings. Returning true trusts the key from then
+// on; false aborts the connection. Without a prompt, unknown keys are refused.
+using HostKeyPrompt =
+    std::function<bool(const std::string &host, const std::string &fingerprint)>;
+void setHostKeyPrompt(HostKeyPrompt prompt);
 
 class Repo
 {

@@ -137,6 +137,13 @@ repository and reports "no repository" otherwise.
 - One payload structure is shared by the callbacks of a remote operation;
   push-status tracking and credentials travel together.
 - Push rejections reported by the server are turned into readable errors.
+- SSH host keys are verified twice: libgit2 checks the machine's `known_hosts`
+  first, and a key that is not there is checked against the fingerprints stored
+  in the settings. An unknown key asks the user once (`git::setHostKeyPrompt`,
+  wired to a confirmation dialog by the panel) and is remembered afterwards; a
+  key that differs from the stored one is always refused, because it may mean
+  the host was replaced. Windows has no OpenSSH configuration, so this store is
+  what makes SSH usable there.
 
 ## Rules and validations
 

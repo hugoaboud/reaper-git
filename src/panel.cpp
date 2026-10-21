@@ -1141,7 +1141,7 @@ void buildRemoteDialog(HWND hwnd)
 UI_DLGRET remoteDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
   LRESULT themed = 0;
-  if (ui::themeMessage(msg, wParam, lParam, &themed)) return themed;
+  if (ui::themeMessage(hwnd, msg, wParam, lParam, &themed)) return themed;
 
   if (ui::isInitMessage(msg))
   {
@@ -1273,8 +1273,12 @@ settings::Remote runAddRemoteDialog(Panel &panel, bool *ok)
   state.nameEdit = state.urlEdit = state.userEdit = state.authCombo = state.secretEdit =
       state.keyDisplay = state.keyBrowse = state.passphraseEdit = state.secretLabel =
           state.passphraseLabel = nullptr;
-  last = state;
-  last.accepted = false;
+  // Remember what was typed only while the dialog is cancelled; after a server
+  // is added the next dialog starts empty instead of repeating the old values.
+  RemoteDialogState remembered;
+  if (!state.accepted) remembered = state;
+  remembered.accepted = false;
+  last = remembered;
 
   if (!state.accepted) return result;
 
@@ -1323,7 +1327,7 @@ void buildCloneDialog(HWND hwnd)
 UI_DLGRET cloneDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
   LRESULT themed = 0;
-  if (ui::themeMessage(msg, wParam, lParam, &themed)) return themed;
+  if (ui::themeMessage(hwnd, msg, wParam, lParam, &themed)) return themed;
 
   if (ui::isInitMessage(msg))
   {
@@ -1402,7 +1406,7 @@ void buildAddLocalDialog(HWND hwnd)
 UI_DLGRET addLocalDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
   LRESULT themed = 0;
-  if (ui::themeMessage(msg, wParam, lParam, &themed)) return themed;
+  if (ui::themeMessage(hwnd, msg, wParam, lParam, &themed)) return themed;
 
   if (ui::isInitMessage(msg))
   {
@@ -2725,6 +2729,17 @@ void open()
 
   if (!g_panel) g_panel = new Panel();
   store().ensureLoaded();
+
+  // An SSH server that is not in this machine's known_hosts file (always the
+  // case on Windows, which has no OpenSSH configuration) is trusted once the
+  // user confirms its fingerprint; the key is then remembered in the settings.
+  git::setHostKeyPrompt([](const std::string &host, const std::string &fingerprint) {
+    return ui::confirm(g_panel ? g_panel->hwnd : nullptr, "Unknown SSH Host",
+                       "The SSH host key of \"" + host + "\" is not trusted yet.\n\n" +
+                           fingerprint +
+                           "\n\nAccept this key and remember it for this host?\n"
+                           "Only accept it if it belongs to the server you expect.");
+  });
   HWND parent = GetMainHwnd ? GetMainHwnd() : nullptr;
   HWND hwnd = ui::createWindow(parent, "Git", 960, 880, buildPanel, panelProc, 0);
   if (hwnd)

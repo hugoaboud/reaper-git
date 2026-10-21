@@ -15,5 +15,7 @@ set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
 
 set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+# BOTH, not ONLY: prebuilt dependencies for the target (OpenSSL for libssh2, for
+# example) live outside the sysroot and are pointed at explicitly.
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)

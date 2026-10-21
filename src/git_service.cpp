@@ -10,6 +10,7 @@
 
 #include <git2.h>
 
+#include "settings.h"
 #include "util.h"
 
 namespace git
@@ -18,8 +19,21 @@ namespace git
 namespace
 {
 
+// Set when an SSH host key was refused, so lastErrorText() can say why.
+std::string g_hostKeyError;
+
 std::string lastErrorText()
 {
+  // A rejected host key is reported by libgit2 as "invalid or unknown remote ssh
+  // hostkey"; the callback knows why it was rejected, which is what the user
+  // needs to read.
+  if (!g_hostKeyError.empty())
+  {
+    std::string text = g_hostKeyError;
+    g_hostKeyError.clear();
+    return text;
+  }
+
   const git_error *err = git_error_last();
   if (!err || !err->message) return {};
 
@@ -81,6 +95,82 @@ struct CallbackPayload
   PushStatus *push = nullptr;
 };
 
+HostKeyPrompt g_hostKeyPrompt;
+
+// "SHA256:ab:cd:..." for the key the server presented. libgit2 fills the SHA-256
+// hash when libssh2 provides one; SHA-1 is the fallback.
+std::string hostKeyFingerprint(const git_cert_hostkey &cert)
+{
+  const unsigned char *bytes = nullptr;
+  std::size_t length = 0;
+  const char *name = "";
+
+  if (cert.type & GIT_CERT_SSH_SHA256)
+  {
+    bytes = cert.hash_sha256;
+    length = sizeof(cert.hash_sha256);
+    name = "SHA256";
+  }
+  else if (cert.type & GIT_CERT_SSH_SHA1)
+  {
+    bytes = cert.hash_sha1;
+    length = sizeof(cert.hash_sha1);
+    name = "SHA1";
+  }
+  if (!bytes) return {};
+
+  static const char *const kHex = "0123456789abcdef";
+  std::string text = name;
+  text += ':';
+  for (std::size_t i = 0; i < length; ++i)
+  {
+    if (i) text += ':';
+    text += kHex[bytes[i] >> 4];
+    text += kHex[bytes[i] & 0x0f];
+  }
+  return text;
+}
+
+// An SSH host key that libssh2 accepted but the user has not trusted yet: ask,
+// and remember the answer. libgit2's own known_hosts lookup runs first, so hosts
+// already trusted on that machine are never prompted for again.
+int hostKeyCheckCallback(git_cert *cert, int valid, const char *host, void * /*payload*/)
+{
+  if (!cert || cert->cert_type != GIT_CERT_HOSTKEY_LIBSSH2) return 0;
+  if (valid) return 0;
+
+  auto *key = reinterpret_cast<git_cert_hostkey *>(cert);
+  const std::string fingerprint = hostKeyFingerprint(*key);
+  const std::string hostName = host ? host : "";
+  if (fingerprint.empty())
+  {
+    g_hostKeyError = "the host key of '" + hostName + "' could not be read";
+    return GIT_ECERTIFICATE;
+  }
+
+  settings::Store &store = settings::Store::get();
+  store.ensureLoaded();
+  const std::string *known = store.hostKey(hostName);
+  // A key that differs from the trusted one is never accepted silently.
+  if (known && *known != fingerprint)
+  {
+    g_hostKeyError = "the host key of '" + hostName + "' changed (now " + fingerprint +
+                     ", before " + *known + "); refusing to connect";
+    return GIT_ECERTIFICATE;
+  }
+  if (known) return 0;
+
+  if (!g_hostKeyPrompt || !g_hostKeyPrompt(hostName, fingerprint))
+  {
+    g_hostKeyError = "the host key of '" + hostName + "' is not trusted (" + fingerprint + ")";
+    return GIT_ECERTIFICATE;
+  }
+
+  store.setHostKey(hostName, fingerprint);
+  store.save();
+  return 0;
+}
+
 int credentialsCallback(git_credential **out, const char * /*url*/, const char *usernameFromUrl,
                         unsigned int allowedTypes, void *payload)
 {
@@ -133,6 +223,7 @@ void setupCallbacks(git_remote_callbacks &callbacks, CallbackPayload &payload,
 {
   git_remote_init_callbacks(&callbacks, GIT_REMOTE_CALLBACKS_VERSION);
   callbacks.credentials = credentialsCallback;
+  callbacks.certificate_check = hostKeyCheckCallback;
   callbacks.payload = &payload;
   if (pushStatus)
   {
@@ -181,6 +272,8 @@ int stashCallback(std::size_t index, const char *message, const git_oid *oid, vo
 }
 
 } // namespace
+
+void setHostKeyPrompt(HostKeyPrompt prompt) { g_hostKeyPrompt = std::move(prompt); }
 
 void init() { git_libgit2_init(); }
 
@@ -318,27 +411,26 @@ bool checkAuthentication(const std::string &url, const Credentials &creds, std::
     return true;
   }
 
-  // SSH: authentication happens before the remote command. For a server URL
-  // without a repository the server then fails the (expected) upload-pack
-  // request, e.g. "fatal: '/' does not appear to be a git repository" - the
-  // credentials were accepted. Only connection/authentication failures count.
+  // SSH: authentication happens before the remote command. A server URL has no
+  // repository, so a *successful* authentication is followed by a failed
+  // upload-pack request, e.g. "fatal: '/' does not appear to be a git
+  // repository". Only that post-authentication noise counts as success; every
+  // other connect failure (rejected credentials, an algorithm mismatch in the
+  // SSH handshake, an unreachable host) is a failure. Treating unknown errors as
+  // success is what let invalid credentials through on Windows, where libssh2
+  // reports failures with different wording than on Linux.
   auto contains = [&detail](const char *needle) {
     return detail.find(needle) != std::string::npos;
   };
-  const bool connectionProblem = contains("connect") || contains("Connect") ||
-                                 contains("refused") || contains("resolve") ||
-                                 contains("timed out") || contains("timeout") ||
-                                 contains("unreachable") || contains("handshake") ||
-                                 contains("authenticat") || contains("denied") ||
-                                 contains("permission");
-  if (connectionProblem)
-  {
-    setError(error, detail.empty() ? "could not connect to the server"
-                                   : "could not connect to the server: " + detail);
-    return false;
-  }
+  const bool authenticatedButNoRepository = contains("does not appear to be a git "
+                                                     "repository") ||
+                                            contains("upload-pack") ||
+                                            contains("no such repository");
+  if (authenticatedButNoRepository) return true;
 
-  return true;
+  setError(error, detail.empty() ? "could not authenticate with the server"
+                                 : "could not authenticate with the server: " + detail);
+  return false;
 }
 
 Repo::~Repo()

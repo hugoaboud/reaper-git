@@ -4,6 +4,7 @@
 // SSH key passphrases are obfuscated (see util::obfuscate) but not encrypted.
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,12 @@ public:
   std::vector<Repository> &repositories() { return repositories_; }
   const std::vector<Repository> &repositories() const { return repositories_; }
 
+  // SSH host keys the user has trusted, keyed by host name and stored as a
+  // SHA-256 fingerprint. A key that differs from the stored one means the host
+  // changed its key, which is reported as a possible attack.
+  const std::string *hostKey(const std::string &host) const;
+  void setHostKey(const std::string &host, const std::string &fingerprint);
+
   // Path of the repository the Project/History sections work on.
   std::string &currentRepository() { return currentRepository_; }
   const std::string &currentRepository() const { return currentRepository_; }
@@ -66,6 +73,7 @@ private:
 
   std::vector<Remote> remotes_;
   std::vector<Repository> repositories_;
+  std::map<std::string, std::string> hostKeys_;
   std::string currentRepository_;
   bool loaded_ = false;
 };

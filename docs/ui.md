@@ -49,6 +49,9 @@ API. New code belongs in the matching group.
   procedure. `ui::showModal` runs it modally, `ui::createWindow` creates the
   modeless panel.
 - Controls are created once, when the window exists (`ui::isInitMessage`).
+  Windows sends `WM_CREATE` *and* `WM_INITDIALOG` to a dialog procedure, so only
+  `WM_INITDIALOG` counts there; SWELL may use either. Treating both as
+  initialise creates a second, untracked set of controls that never moves.
   Nothing recreates controls later; only their text, visibility and position
   change.
 - On Linux the dialog is described by a `SWELL_DialogResourceIndex` with a build
@@ -129,6 +132,12 @@ API. New code belongs in the matching group.
 - `ui::listAddRow`, `ui::listClear`, `ui::listSelection` and `ui::listSelect`
   wrap the list view. Lists repaint themselves after a change; the rest of the
   panel needs `ui::refreshWindow`.
+- Invalidation is not the same on both platforms: SWELL repaints children when
+  the parent is invalidated, Windows does not. `ui::refreshWindow` therefore uses
+  `RedrawWindow` with `RDW_ALLCHILDREN` there, without a forced repaint. Moving or
+  hiding controls does not invalidate anything by itself, so a layout pass must
+  end with one `ui::refreshWindow` call - per-control invalidation made the panel
+  flicker. Skipping the final refresh leaves old pixels behind.
 - History can start with a synthetic row for uncommitted changes. Any code that
   maps a selected row to a commit must subtract `Panel::historyRowOffset`.
 - Long text is truncated with ASCII dots, because SWELL's fonts may lack

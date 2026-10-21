@@ -58,7 +58,8 @@ struct BlankDialogTemplate
 BlankDialogTemplate makeTemplate()
 {
   BlankDialogTemplate tmpl{};
-  tmpl.dlg.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME;
+  // WS_CLIPCHILDREN stops the background from painting over the controls.
+  tmpl.dlg.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN | DS_MODALFRAME;
   tmpl.dlg.cdit = 0;
   tmpl.dlg.cx = 200;
   tmpl.dlg.cy = 120;
@@ -115,10 +116,9 @@ HWND createWindow(HWND parent, const char *title, int width, int height, BuildPr
   g_builder = build;
 #ifdef _WIN32
   BlankDialogTemplate tmpl = makeTemplate();
+  // The procedure creates the controls and sizes the window in WM_INITDIALOG.
   HWND hwnd = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), &tmpl.dlg, parent, proc, param);
   if (!hwnd) return nullptr;
-  applyInitialSize(hwnd, title, width, height);
-  runBuilder(hwnd);
   ShowWindow(hwnd, SW_SHOW);
   return hwnd;
 #else
@@ -139,16 +139,30 @@ void runBuilder(HWND hwnd)
 #endif
 }
 
-bool isInitMessage(UINT msg) { return msg == WM_INITDIALOG || msg == WM_CREATE; }
+bool isInitMessage(UINT msg)
+{
+#ifdef _WIN32
+  // A Win32 dialog procedure receives WM_CREATE and then WM_INITDIALOG. Treating
+  // both as "initialise" built every control twice, leaving an untracked second
+  // set that never moved when the panel rearranged itself.
+  return msg == WM_INITDIALOG;
+#else
+  // SWELL announces its dialogs with WM_CREATE (and WM_INITDIALOG for some).
+  return msg == WM_INITDIALOG || msg == WM_CREATE;
+#endif
+}
 
 void refreshWindow(HWND hwnd)
 {
   if (!hwnd) return;
-  // SWELL repaints from its own invalidation bookkeeping; a full-window
-  // invalidate is the portable way to say "everything in here needs redrawing".
-  InvalidateRect(hwnd, nullptr, TRUE);
 #ifdef _WIN32
-  UpdateWindow(hwnd);
+  // Windows invalidates the given window only, not its children: without
+  // RDW_ALLCHILDREN controls keep their old pixels until the mouse hovers them.
+  // No forced repaint either, otherwise a layout pass flickers.
+  RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+#else
+  // SWELL repaints from its own invalidation bookkeeping, children included.
+  InvalidateRect(hwnd, nullptr, TRUE);
 #endif
 }
 
@@ -200,6 +214,7 @@ HWND addButton(HWND parent, const std::string &text, int id, int x, int y, int w
 void moveControl(HWND control, int x, int y, int w, int h)
 {
   if (!control) return;
+  // A layout pass moves dozens of controls and ends with one refreshWindow call.
   SetWindowPos(control, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
@@ -286,15 +301,17 @@ void setWarningText(HWND control, bool warning)
     warningControls().erase(control);
 }
 
-bool themeMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT *result)
+bool themeMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT *result)
 {
   switch (msg)
   {
     case WM_ERASEBKGND:
     {
+      // wParam is the device context and the window is the one that received
+      // the message; reading the window from lParam painted nothing.
       HDC dc = reinterpret_cast<HDC>(wParam);
       RECT client{};
-      GetClientRect(reinterpret_cast<HWND>(lParam), &client);
+      GetClientRect(hwnd, &client);
       fillRect(dc, client, brush(kDialogBackground));
       if (result) *result = 1;
       return true;
@@ -358,7 +375,9 @@ void setEnabled(HWND control, bool enabled)
 
 void setVisible(HWND control, bool visible)
 {
-  if (control) ShowWindow(control, visible ? SW_SHOW : SW_HIDE);
+  if (!control) return;
+  // The layout pass repaints afterwards, covering the area a hidden one leaves.
+  ShowWindow(control, visible ? SW_SHOW : SW_HIDE);
 }
 
 int addComboItem(HWND combo, const std::string &text)
@@ -527,7 +546,7 @@ void buildPromptDialog(HWND hwnd)
 UI_DLGRET promptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
   LRESULT themed = 0;
-  if (themeMessage(msg, wParam, lParam, &themed)) return themed;
+  if (themeMessage(hwnd, msg, wParam, lParam, &themed)) return themed;
 
   if (isInitMessage(msg))
   {
@@ -602,7 +621,7 @@ void buildCheckboxDialog(HWND hwnd)
 UI_DLGRET checkboxProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
   LRESULT themed = 0;
-  if (themeMessage(msg, wParam, lParam, &themed)) return themed;
+  if (themeMessage(hwnd, msg, wParam, lParam, &themed)) return themed;
 
   if (isInitMessage(msg))
   {
@@ -669,7 +688,7 @@ void buildCommitOrStashDialog(HWND hwnd)
 UI_DLGRET commitOrStashProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
   LRESULT themed = 0;
-  if (themeMessage(msg, wParam, lParam, &themed)) return themed;
+  if (themeMessage(hwnd, msg, wParam, lParam, &themed)) return themed;
 
   if (isInitMessage(msg))
   {

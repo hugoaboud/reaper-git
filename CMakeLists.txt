@@ -39,7 +39,22 @@ set(WDL_SWELL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/WDL/swell")
 set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 if(WIN32)
-  set(CRYPTO_BACKEND "WinCNG" CACHE STRING "libssh2 crypto backend" FORCE)
+  # OpenSSL is needed for the key exchanges modern servers offer: the CNG
+  # backend has neither ECDH (LIBSSH2_ECDSA) nor curve25519, so SSH fails with
+  # "Unable to exchange encryption keys". Fall back to CNG only when OpenSSL is
+  # unavailable for the target, and say so loudly.
+  find_package(OpenSSL QUIET)
+  if(OPENSSL_FOUND)
+    set(CRYPTO_BACKEND "OpenSSL" CACHE STRING "libssh2 crypto backend" FORCE)
+    set(REAPER_GIT_WIN_OPENSSL TRUE)
+  else()
+    message(WARNING
+      "OpenSSL was not found for the Windows target: libssh2 falls back to WinCNG, "
+      "which supports neither ECDH nor curve25519. SSH to modern servers will fail "
+      "with 'Unable to exchange encryption keys'. Install OpenSSL development files "
+      "for the target to enable SSH.")
+    set(CRYPTO_BACKEND "WinCNG" CACHE STRING "libssh2 crypto backend" FORCE)
+  endif()
 else()
   set(CRYPTO_BACKEND "OpenSSL" CACHE STRING "libssh2 crypto backend" FORCE)
 endif()
@@ -121,8 +136,13 @@ target_compile_definitions(reaper_git PRIVATE REAPER_GIT_VERSION="${REAPER_GIT_V
 
 if(WIN32)
   # Windows: REAPER's own Win32 API is used directly, no SWELL needed.
-  target_compile_definitions(reaper_git PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_definitions(reaper_git PRIVATE WIN32_LEAN_AND_MEAN)
   target_link_libraries(reaper_git PRIVATE user32 crypt32 secur32 ws2_32 shell32 ole32)
+  if(REAPER_GIT_WIN_OPENSSL)
+    # libssh2 is static and built against OpenSSL here, so its symbols have to be
+    # resolved in the module itself.
+    target_link_libraries(reaper_git PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+  endif()
   if(MINGW)
     # A MinGW build otherwise imports libstdc++-6.dll, libgcc_s_seh-1.dll and
     # libwinpthread-1.dll, which do not exist on a normal Windows machine: REAPER

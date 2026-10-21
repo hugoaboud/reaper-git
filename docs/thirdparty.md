@@ -67,7 +67,20 @@ which parts are actually used, and what to watch out for.
 - **Caveats:**
   - Needs `_DEFAULT_SOURCE` on Linux: strict ANSI mode hides the BSD types
     (`u_int`, `u_char`) used by its chacha/poly1305 code.
-  - Crypto backend is OpenSSL on Linux and WinCNG on Windows.
+  - Crypto backend is OpenSSL on Linux. On Windows the build uses OpenSSL when
+    CMake can find it and only falls back to WinCNG otherwise, because WinCNG has
+    neither ECDH (`LIBSSH2_ECDSA`) nor curve25519; against a server that offers
+    only those key exchanges (modern OpenSSH does) the fallback fails with
+    "Unable to exchange encryption keys". The fallback prints a build warning.
+  - For a Windows build, point CMake at an OpenSSL built for the same target, for
+    example a MinGW cross build:
+
+    ```
+    ./Configure mingw64 no-shared no-tests --cross-compile-prefix=x86_64-w64-mingw32- \
+        --prefix=/path/to/openssl-mingw
+    make && make install_sw
+    cmake --preset windows-mingw -DOPENSSL_ROOT_DIR=/path/to/openssl-mingw
+    ```
 
 ### REAPER SDK
 

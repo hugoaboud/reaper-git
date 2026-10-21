@@ -49,7 +49,7 @@ void drawCenteredText(HDC dc, const RECT &rect, const std::string &text);
 
 // Dark dialog styling shared by every dialog: returns true when the message was
 // a colour request (the caller must then return `result`).
-bool themeMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT *result);
+bool themeMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT *result);
 
 // Marks a static control to be painted as light yellow warning text on the
 // dialog background (used for the label next to an irreversible toggle).

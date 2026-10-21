@@ -78,6 +78,7 @@ bool Store::load()
   loaded_ = true;
   remotes_.clear();
   repositories_.clear();
+  hostKeys_.clear();
   currentRepository_.clear();
 
   const std::string path = filePath();
@@ -123,6 +124,11 @@ bool Store::load()
       }
     }
 
+    if (root.contains("host_keys") && root["host_keys"].is_object())
+      for (const auto &item : root["host_keys"].items())
+        if (item.value().is_string())
+          hostKeys_[item.key()] = item.value().get<std::string>();
+
     currentRepository_ = root.value("current_repository", std::string());
   }
   catch (const std::exception &)
@@ -155,6 +161,10 @@ bool Store::save() const
     repos.push_back({{"name", r.name}, {"path", r.path}});
   root["repositories"] = repos;
 
+  nlohmann::json hostKeys = nlohmann::json::object();
+  for (const auto &item : hostKeys_) hostKeys[item.first] = item.second;
+  root["host_keys"] = hostKeys;
+
   root["current_repository"] = currentRepository_;
 
   const std::string path = filePath();
@@ -164,6 +174,18 @@ bool Store::save() const
   if (!out) return false;
   out << root.dump(2) << "\n";
   return out.good();
+}
+
+const std::string *Store::hostKey(const std::string &host) const
+{
+  const auto it = hostKeys_.find(host);
+  return it == hostKeys_.end() ? nullptr : &it->second;
+}
+
+void Store::setHostKey(const std::string &host, const std::string &fingerprint)
+{
+  ensureLoaded();
+  hostKeys_[host] = fingerprint;
 }
 
 const Repository *Store::findRepository(const std::string &path) const
